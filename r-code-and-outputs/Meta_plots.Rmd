@@ -1,0 +1,76 @@
+---
+title: "Meta plots"
+author: "Group 1"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+```{r}
+library(corrplot)
+library(ggplot2)
+```
+
+```{r}
+meta_df <- read.csv('meta_2014_2023.csv', header = TRUE)
+head(meta_df)
+#ncol(meta_df) 20 columns
+#nrow(meta_df) 2516 obs
+
+## stock price trend
+meta_df <- meta_df[order(meta_df$date),] #make sure the data is ordered by date
+meta_df$date <- as.Date(meta_df$date)
+
+ggplot(meta_df, aes(x = date, y = next_day_close)) +
+  geom_line() +
+  labs(x = 'Date', y = 'Next Day Close', title = 'META Close Price') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+## corrplot: open, high, low, close, sma_50, ema_50, sma_100, and ema_100 are highly correlated
+any(is.na(meta_df)) #no NAs
+num_cols <- meta_df[, sapply(meta_df, is.numeric)]
+cor_mat <- cor(num_cols)
+
+corrplot(cor_mat)
+
+## Plots to show trends for those highly correlated variables 
+correlated_vars <- c("open", "high", "low", "close", "sma_50", "ema_50", "sma_100", "ema_100")
+data_melted <- reshape2::melt(meta_df, id.vars = "date", measure.vars = correlated_vars)
+ggplot(data_melted, aes(x = date, y = value, color = variable)) +
+  geom_line() +
+  scale_color_manual(values = c("open" = "blue", "high" = "green", "low" = "red", "close" = "purple",
+                                "sma_50" = "orange", "ema_50" = "pink", "sma_100" = "cyan", "ema_100" = "brown")) +
+  labs(title = "Correlated Variables with Next Day Close Over Time",
+       x = "Date",
+       y = "Price",
+       color = "Variable") +
+  theme(legend.position = "bottom")
+
+
+## PCA
+num_cols <- num_cols[,-ncol(num_cols)] # drop the resp variable next_day_close
+pca_result <- prcomp(num_cols, center = TRUE, scale = TRUE)
+pca_summ <- summary(pca_result)
+
+#pve 
+pve <- pca_summ$importance[2,] * 100
+#cumulative pve
+cumul_pve <- pca_summ$importance[3,] * 100
+cumul_pve
+
+loadings <- pca_result$rotation # egienvector (loadings)
+std_dev <- pca_result$sdev^2 # egienvalue
+
+# Scree
+#screeplot(pca_result, type = 'lines')
+pve_data <- data.frame(PC = 1:10, PVE = pve[1:10])
+pve_data
+
+ggplot(pve_data, aes(x = PC, y = PVE)) +
+  geom_bar(stat = "identity", fill = "skyblue") +  # Use geom_bar for a bar plot
+  geom_text(aes(label = sprintf("%.1f%%", PVE)), vjust = -0.5) +  # Add text labels
+  geom_line(aes(group = 1), color = "red") +
+  geom_point(color = "blue", size = 3) +
+  labs(x = "Principal Component", y = "Proportion of Variance Explained (%)",
+       title = "Proportion of Variance Explained by Each Principal Component")
+
+```
+

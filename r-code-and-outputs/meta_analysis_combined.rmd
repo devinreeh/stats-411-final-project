@@ -1,0 +1,276 @@
+---
+title: "STATS 411 - Final Report"
+author: "Betty Hwang, Katie Jo, Devin Reeh, Mariano Aloiso"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Exploring Meta Stock Price Trends with Multivariate Statistical Analysis
+
+Load data
+
+```{r}
+data <- read.csv("meta_2014_2023.csv")
+
+# Show header
+head(data)
+
+# Show data summary
+summary(data)
+
+# Count null values by column
+colSums(is.na(data))
+
+# The data contains 2516 observations and 20 columns
+ncol(data) #20 columns
+nrow(data) #2516 obs
+
+# Show the stock price trend
+data <- data[order(data$date),] 
+data$date <- as.Date(data$date)
+
+ggplot(data, aes(x = date, y = next_day_close)) +
+  geom_line() +
+  labs(x = 'Date', y = 'Next Day Close', title = 'META Close Price') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Plot correlation matrix: open, high, low, close, sma_50, ema_50, sma_100, and ema_100 are highly correlated
+num_cols <- data[, sapply(data, is.numeric)]
+cor_mat <- cor(num_cols)
+corrplot(cor_mat)
+
+# Show trends for those highly correlated variables 
+correlated_vars <- c("open", "high", "low", "close", "sma_50", "ema_50", "sma_100", "ema_100")
+data_melted <- reshape2::melt(data, id.vars = "date", measure.vars = correlated_vars)
+ggplot(data_melted, aes(x = date, y = value, color = variable)) +
+  geom_line() +
+  scale_color_manual(values = c("open" = "blue", "high" = "green", "low" = "red", "close" = "purple",
+                                "sma_50" = "orange", "ema_50" = "pink", "sma_100" = "cyan", "ema_100" = "brown")) +
+  labs(title = "Correlated Variables with Next Day Close Over Time",
+       x = "Date",
+       y = "Price",
+       color = "Variable") +
+  theme(legend.position = "bottom")
+
+# Add a next_day_volume column. This will be used for canonical analysis
+data$next_day_volume <- c(data$volume[-1], NA)
+
+# Remove last row
+data <- data[-nrow(data), ]
+```
+
+# Baseline model
+
+Run the analysis on all the variables. This gives a baseline understanding of the underlying structure in your data.
+
+```{r}
+# Select all columns except next day variables and date
+data_baseline <- data[, -c(1, 20, 21)]
+```
+
+## Baseline - Principal component analysis
+
+```{r, echo=TRUE, results='hide', message=FALSE}
+library(scales)
+```
+
+```{r}
+# Conduct PCA
+pca_baseline <- prcomp(data_baseline, scale = TRUE)
+
+# Show summary
+summary(pca_baseline)
+
+# Show loadings
+print(pca_baseline$rotation)
+
+# Scree plot
+pca_summ <- summary(pca_baseline)
+pve <- pca_summ$importance[2,] * 100
+
+pve_data <- data.frame(PC = 1:10, PVE = pve[1:10]) # Let's look at the first 10 PCs
+
+ggplot(pve_data, aes(x = PC, y = PVE)) +
+  geom_bar(stat = "identity", fill = "skyblue") + 
+  geom_text(aes(label = sprintf("%.1f%%", PVE)), vjust = -0.5) + 
+  geom_line(aes(group = 1), color = "red") +
+  geom_point(color = "blue", size = 3) +
+  labs(x = "Principal Component", y = "Proportion of Variance Explained (%)",
+       title = "Proportion of Variance Explained by Each Principal Component")
+
+# Calculate cumulative proportion of variance explained
+cumulative_variance <- cumsum(pca_baseline$sdev^2) / sum(pca_baseline$sdev^2) * 100
+cumulative_variance
+
+
+# Plot cumulative proportion of variance explained
+plot(cumulative_variance,
+     type = "b",
+     xlab = "Principal Component",
+     ylab = "Cumulative Proportion of Variance Explained",
+     main = "Total Variance Explained (Baseline Model)")
+
+```
+
+## Baseline - Factor analysis
+
+```{r, echo=TRUE, results='hide', message=FALSE}
+library(psych)
+```
+
+Conduct factor analysis using 2 factors and varimax rotation.
+
+```{r}
+# Specify the number of factors
+min_num_factors <- 2
+max_num_factors <- 2
+
+# Create an empty list to store factor analysis results
+fa_results <- list()
+
+# Loop through each number of factors
+for (i in min_num_factors:max_num_factors) {
+    # Conduct factor analysis
+    fa_result <- fa(data_baseline, nfactors = i, rotate = "varimax")
+    
+    # Store the factor analysis result in the list
+    fa_results[[paste("fa_baseline_", i, sep = "")]] <- fa_result
+}
+
+# Print factor loadings, scores, and summary for each factor analysis
+for (i in min_num_factors:max_num_factors) {
+    cat("Factor analysis for", i, "factor(s):\n")
+    print(fa_results[[paste("fa_baseline_", i, sep = "")]]$loadings)
+    print(fa_results[[paste("fa_baseline_", i, sep = "")]])
+    cat("\n")
+}
+```
+
+## Baseline - Canonical correlation analysis
+
+```{r, echo=TRUE, results='hide', message=FALSE}
+library(CCA)
+library(candisc)
+```
+
+Conduct canonical correlation analysis using the package `CCA`. Split the data into two sets:
+one set for next day variables and another for technical indicators
+(e.g., RSI, CCI, moving averages).
+
+```{r}
+# List respective columns
+col_price <- c("next_day_close", "next_day_volume")
+col_indicators <- c("open", "high", "low", "close", "volume",
+                    "rsi_7", "rsi_14", "cci_7", "cci_14", "sma_50",
+                    "ema_50", "sma_100", "ema_100", "macd",
+                    "bollinger", "TrueRange", "atr_7", "atr_14")
+
+# Select the variables for each group
+group_1 <- scale(data[, col_price])
+group_2 <- scale(data_baseline[, col_indicators])
+
+# Run canonical correlation analysis
+cca_baseline <- cancor(group_1, group_2,
+                       set.names = c("Next Day Variables", "Technical Indicators"))
+
+# Canonical correlation analysis results
+coef(cca_baseline, type = "both", standardize = TRUE)
+
+# Print structure
+cca_baseline$structure
+
+```
+
+# Subset Data
+
+Subset the data to include only the close price and the long term technical indicators
+
+```{r}
+# Select columns
+data_subset <- data[, c("rsi_14", "cci_14", "sma_50",
+                        "ema_50", "sma_100", "ema_100", "bollinger",
+                        "macd", "TrueRange", "atr_14",
+                        "next_day_close", "next_day_volume")]
+
+```
+
+## Subset - Principal component analysis
+
+```{r}
+# Conduct PCA
+pca_subset <- prcomp(data_subset, scale = TRUE)
+
+# Show summary
+summary(pca_subset)
+
+# Show loadings
+print(pca_subset$rotation)
+
+# Calculate cumulative proportion of variance explained
+cumulative_variance <- cumsum(pca_subset$sdev^2) / sum(pca_subset$sdev^2) * 100
+
+# Plot cumulative proportion of variance explained
+plot(cumulative_variance,
+     type = "b",
+     xlab = "Principal Component",
+     ylab = "Cumulative Proportion of Variance Explained",
+     main = "Total Variance Explained (Subset Model)")
+```
+
+## Subset - Factor analysis
+
+Conduct factor analysis using 2 factors and varimax rotation.
+
+```{r}
+# Specify the number of factors
+min_num_factors <- 2
+max_num_factors <- 2
+
+# Create an empty list to store factor analysis results
+fa_results <- list()
+
+# Loop through each number of factors
+for (i in min_num_factors:max_num_factors) {
+    # Conduct factor analysis
+    fa_result <- fa(data_subset, nfactors = i, rotate = "varimax")
+    
+    # Store the factor analysis result in the list
+    fa_results[[paste("fa_subset_", i, sep = "")]] <- fa_result
+}
+
+# Print factor loadings, scores, and summary for each factor analysis
+for (i in min_num_factors:max_num_factors) {
+    cat("Factor analysis for", i, "factor(s):\n")
+    print(fa_results[[paste("fa_subset_", i, sep = "")]]$loadings)
+    print(fa_results[[paste("fa_subset_", i, sep = "")]])
+    cat("\n")
+}
+```
+
+## Subset - Canonical correlation analysis
+
+```{r}
+# List respective columns
+col_price <- c("next_day_close", "next_day_volume")
+col_indicators <- c("rsi_14", "cci_14", "sma_50",
+                    "ema_50", "sma_100", "ema_100", "bollinger",
+                    "macd", "TrueRange", "atr_14")
+
+# Select the variables for each group
+group_1 <- scale(data[, col_price])
+group_2 <- scale(data_subset[, col_indicators])
+
+# Run canonical correlation analysis
+cca_subset <- cancor(group_1, group_2,
+                    set.names = c("Next Day Variables", "Technical Indicators"))
+
+# Canonical correlation analysis results
+coef(cca_subset, type = "both", standardize = TRUE)
+
+# Print structure
+cca_subset$structure
+```
