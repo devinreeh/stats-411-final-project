@@ -1,4 +1,4 @@
-#Project Summary
+# Project Summary
 
 This project, completed as a Stats 411 final report, investigates Meta Platforms (Facebook) stock price trends from 2014 to 2023 using multivariate statistical analysis. The dataset contained 2,516 observations and 20 variables, including daily price movements, trading volume, and technical indicators such as RSI, CCI, moving averages, MACD, Bollinger bands, and volatility measures
 
